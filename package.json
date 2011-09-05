@@ -1,0 +1,19 @@
+{
+	"name": "tinybrowsercouch",
+	"author": "Andrew Moist",
+	"version": "0.9.0",
+	"contributors": [
+	{
+		"name": "Andrew Moist",
+		"email": "andyjm@gmail.com",
+		"url": "http://andrewmoist.com/"
+	}],
+	"url": "https://github.com/andyuk/tinybrowsercouch",
+	"license": {
+		"name": "MIT",
+		"url": "http://www.opensource.org/licenses/mit-license.php"
+	},
+	"description": "A HTML5 web storage wrapper than includes CouchDB replication.",
+	"keywords": [ "webstorage", "localstorage", "couchdb" ],
+	"lib": "tinybrowsercouch"
+}

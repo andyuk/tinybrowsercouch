@@ -1,0 +1,4 @@
+{
+    "name": "Todo list",
+    "description": "A simple todo list app that syncs with CouchDB"
+}
