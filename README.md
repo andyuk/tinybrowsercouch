@@ -19,6 +19,10 @@ var couchDB = new TinyBrowserCouch.CouchDB("http://localhost:3000/api/0.1/");
 bookStore.replicator.pushTo(couchDB);
 bookStore.replicator.pullFrom(couchDB);
 
+# Known issues
+
+* Replication currently only works well with a single CouchDB instance
+
 # TODO
 
 * Unit tests

@@ -2,45 +2,66 @@ var db_name = 'tinybrowsercouch-tests';
 var $couchdb;
 var $tinycouch;
 
-QUnit.begin = function() {
-
-	// Remove all local storage
-	delete localStorage[db_name];
-
-	// drop (if exists) and create couch database
-	$couchdb = $.couch.db(db_name);
+module('Main', {
 	
-	$.ajax({
-		url: $couchdb.uri,
-		type: 'GET',
-		dataType: 'json',
-	 	success: function (data) {
-			console.log('Test DB exists');
+ setup: function() {
 
-			dropCouchDB(function() {
-				createCouchDB();
-			});
-		 },
-		 error: function(xhr, textStatus, error) {
-			console.log('Test DB does not exist');
-			createCouchDB();
-		 }
-	});
+		stop();
 
-	$tinycouch = new TinyBrowserCouch.LocalStorage(db_name);
-	$tinycouch.remote = new TinyBrowserCouch.CouchDB('/' + db_name + '/');
-};
+		// Remove all local storage
+		delete localStorage[db_name];
 
-function createCouchDB() {
+		// drop (if exists) and create couch database
+		$couchdb = $.couch.db(db_name);
+	
+		$.ajax({
+			url: $couchdb.uri,
+			type: 'GET',
+			dataType: 'json',
+		 	success: function (data) {
+				console.log('Test DB exists');
+
+				dropCouchDB(function() {
+					createCouchDB(function() {
+						start();
+					});
+				});
+			 },
+			 error: function(xhr, textStatus, error) {
+				console.log('Test DB does not exist');
+				createCouchDB(function() {
+					start();
+				});
+			 }
+		});
+
+		$tinycouch = new TinyBrowserCouch.LocalStorage(db_name);
+		$tinycouch.remote = new TinyBrowserCouch.CouchDB('/' + db_name + '/');	
+	},
+	teardown: function() {
+		
+		stop();
+		// Remove all local storage
+		delete localStorage[db_name];
+
+		dropCouchDB(function() {
+			start();
+		});
+	}
+});
+
+function createCouchDB(callback) {
 	
 	$couchdb.create({
 	 success: function (data) {
 		console.log('Created CouchDB DB');
+		if (typeof(callback) === 'function') {
+			callback();
+		}
 	 }
 	});
 }
 function dropCouchDB(callback) {
-
 
 	$couchdb.drop({
 	 success: function (data) {
@@ -51,7 +72,7 @@ function dropCouchDB(callback) {
 	 }
 	});
 }
-
+/*
 QUnit.done = function(results) {
 	
 	// Remove all local storage
@@ -60,80 +81,194 @@ QUnit.done = function(results) {
 	setTimeout(function() {
 		dropCouchDB();
 	}, 1000);
-};
+};*/
 
-module("Main Tests");
-
+// Test
 asyncTest("Test connection", 1, function() {
 	
-	var test = function() {
-	
-		console.log('here');
-		$couchdb.info({
-		 success: function (data) {
-			console.log('Got DB info OK');
-			start();
-			ok(true);
-		 }
-		});
-	}
-	
-	// Delay start of this test until DB has been created in QUnit.begin
-	setTimeout(test, 500);
-});
-
-asyncTest("Add CouchDB doc", 1, function() {
-	
-	var doc = {
-		"name": "fred"
-	};
-	
-	$couchdb.saveDoc(doc, {
+	console.log('# Test connection');
+	$couchdb.info({
 	 success: function (data) {
-		console.log('Saved ' + JSON.stringify(doc));
+		console.log('Got DB info OK');
 		start();
 		ok(true);
 	 }
 	});
 });
 
+
+// Test
+asyncTest("Add CouchDB doc", 2, function() {
+	
+	console.log('# Add CouchDB doc');
+	addCouchDoc('testdoc', function() {
+		start();
+		ok(true);
+	});
+});
+
+var addCouchDoc = function(name, callback) {
+
+	var doc = {
+		"name": name
+	};
+	
+	$couchdb.saveDoc(doc, {
+	 success: function (data) {
+		console.log('Saved ' + JSON.stringify(doc));
+		ok(true);
+		
+		if (callback) callback();
+	 }
+	});
+};
+
+
+// Test
 test("Add localStorage doc", 1, function() {
 	
+	console.log('# Add localStorage doc');
+	addLocalDoc();
+});
+
+var addLocalDoc = function (name) {
+
 	var doc = new Backbone.Model({
-		"name": "wilma"
+		"name": name
 	});
 	
 	$tinycouch.create(doc);
 	$tinycouch.save();
 	equal($tinycouch.findAll().length, 1, '1 doc found');
-});
+};
 
-asyncTest("Replicate to Couch, 2 docs should exist", 1, function() {
+
+// Test
+asyncTest("Replicate to Couch, 2 docs should exist", 5, function() {
+
+	console.log('# Replicate to Couch, 2 docs should exist');
 	
-	$tinycouch.replicator.push($tinycouch.remote, function() {
-		
-		start();
-		console.log('Replication pull to couchDB complete');
-		ok(true);
+	addLocalDoc('wilma');
+	addCouchDoc('fred', function() {
+		replicateToCouch(function() {
+			equal($tinycouch.replicator.changes.length, 0, '0 pending change should exist');
+			start();
+		});
 	});
 });
 
-test("Replicate to localStorage, 2 docs should exist", 1, function() {
+var replicateToCouch = function(callback) {
 	
-	ok(true);
+	ok($tinycouch.replicator.changes.length >= 1, 'At least 1 pending change should exist');
+
+	$tinycouch.replicator.push($tinycouch.remote, function() {
+
+		console.log('Replication push to couchDB complete');
+
+		$couchdb.allDocs({
+		 success: function (data) {
+			ok(data.total_rows > 0, 'At least one document expected in CouchDB');
+			if (callback) callback();
+		 }
+		});
+	});
+};
+
+// Test
+asyncTest("Replicate to localStorage, 2 docs should exist", 3, function() {
+
+	console.log('# Replicate to localStorage, 2 docs should exist');
+	
+	addLocalDoc('wilma');
+	addCouchDoc('fred', function() {
+		replicateToLocal(function() {
+			start();
+		});		
+	});
 });
 
-test("Remove local, replicate to couch, check it has been deleted", 1, function() {
+var replicateToLocal = function(callback) {
+
+	$tinycouch.replicator.pull($tinycouch.remote, function() {
 	
-	ok(true);
+		console.log('Replication pull to localStorage complete');
+		equal($tinycouch.findAll().length, 2, '2 docs found');
+	
+		if (callback) callback();
+	});
+};
+
+// Test
+asyncTest("Test adding, replicate to local, deleting local", 5, function() {
+		
+	console.log('# Test adding, replicate to local, deleting local');
+	
+	addLocalDoc('wilma');	
+	addCouchDoc('fred', function() {
+		
+		replicateToLocal(function() {
+
+			var records = $tinycouch.findAll();
+			var fred = _.detect(records, function(o) {
+				return o.name === 'fred';
+			});
+			start();
+			ok(typeof(fred) === 'object', 'Fred has been found');
+
+			$tinycouch.destroy(fred);
+			$tinycouch.save();
+
+			equal($tinycouch.findAll().length, 1, '1 docs should exist');		
+		});
+	});
 });
 
-test("Remove couch, replicate to local, check it has been deleted", 1, function() {
-	
-	ok(true);
-});
+// Test
 
-test("resolve conflict by picking Couch doc as winner", 1, function() {
+asyncTest("Test adding to couch, replicate to local, deleting from couch and replicating again", 5, function() {
+		
+	console.log('# Test adding to couch, replicate to local, deleting from couch and replicating again');
 	
-	ok(true);
+	var callback = function() {
+		
+		//replicateToLocal(function() {
+		
+			var records = $tinycouch.findAll();
+			var wilma = _.detect(records, function(o) {
+				return o.name === 'wilma';
+			});
+
+			ok(typeof(wilma) === 'object', 'Wilma has been found');
+			ok("_rev" in wilma, 'Wilma has an assigned revision');
+			equal($tinycouch.findAll().length, 1, '1 docs should exist');
+		
+			console.log(wilma);
+			$couchdb.removeDoc(wilma, {
+				success: function() {
+
+					ok(true, 'CouchDB doc successfully removed');
+
+					replicateToLocal(function() {
+
+						equal($tinycouch.findAll().length, 1, '1 docs should exist');
+
+						var old_wilma = $tinycouch.findById(wilma._id);
+						ok(old_wilma === undefined, 'Wilma has been deleted');
+
+						start();
+					});
+				}, 
+				error: function(xhr, bah, error) {
+					ok(false, 'Unable to remove doc,' + error);
+					start();
+				}
+			});
+		//});
+	};
+	
+	addLocalDoc('wilma');
+	replicateToCouch(function() {
+		callback();
+	});
+
 });

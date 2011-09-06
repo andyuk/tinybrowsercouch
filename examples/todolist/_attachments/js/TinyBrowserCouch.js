@@ -5,12 +5,15 @@ TinyBrowserCouch.Replicator = {
 
 	store: null,
 	
+	// changes waiting to be pushed to couchdb on next replication
+	changes: null, 
+	
 	pull: function (couchdb, callback) {
 
 		callback = callback || function() {};
 		var self = this;
 
-		var url = couchdb.url + '_changes';
+		var url = couchdb.url + '_changes?include_docs=true';
 
 		// If we've done a pull before, skip to the last update
 		/*var last_seq = localStorage.getItem(this.store.name + '-last-seq');
@@ -26,13 +29,14 @@ TinyBrowserCouch.Replicator = {
 			var results = data.results;
 
 			console.log('receiving changes ' + results.length);
+			
 
 			for (var i=0; i<results.length; i++) {
 
 				var doc = results[i].doc;
 
 				// if record has been deleted, remove from local
-				if (doc._deleted) {
+				if ("_deleted" in doc) {
 					if (self.store.exists(doc._id)) {
 						self.store.destroy(doc);
 					}
@@ -81,47 +85,38 @@ TinyBrowserCouch.Replicator = {
 									"docs": []
 									};
 
-		for (var key in self.store.data) {
+		for (var key in self.changes) {
 
-			var doc = self.store.data[key];
+			var doc = self.changes[key];
 			// Add new records
 
-			var temp_doc = _.extend(doc);
+			var temp_doc;
 			
-			
-			if ("_updated" in temp_doc) {
-				delete temp_doc["_updated"];
-			}
-
-			if ("_rev" in doc) {
-
-				if ("_revision" in temp_doc) {
-					delete temp_doc["_revision"];
-				}
+			if ("_updated" in doc) {
 				
-				if ("_updated" in doc || "_deleted" in doc) {
+				temp_doc = _.extend(self.store.data[doc._id]);
+				delete temp_doc["_updated"];
+				
+			} else if ("_new" in doc) {
 
-					data.docs.push(temp_doc);
+					temp_doc = _.extend(self.store.data[doc._id]);
+					delete temp_doc["_new"];
 
-				} else {
-
-					// Record has not been updated.
-				}
-
-				// TODO: it would be better generating the new revision number in JS, but this doesn't look straight forward
-				// See: http://stackoverflow.com/questions/5954864/how-does-couchdb-calculate-the-revision-number
-
-			} else  {
-				// no _rev means it's a brand new record
-				data.docs.push(doc);
+			} else {
+				// to delete
+				var temp_doc = _.extend(doc);
 			}
+
+			if ("_revision" in temp_doc) {
+				delete temp_doc["_revision"];
+			}
+
+			data.docs.push(temp_doc);
 		}
 
 		if (data.docs.length === 0) {
 			
-			if (typeof(callback) === 'function') {
-				callback();
-			}
+			if (callback) callback();
 			return;
 		}
 		
@@ -157,10 +152,12 @@ TinyBrowserCouch.Replicator = {
 				console.log("Error for record: " + JSON.stringify(update));
 
 			} else {
-				// Updated or new record
+				// New, updated or deleted records
 
 				var local_doc = this.store.findById(update.id);
-
+				//debugger;
+				this.removeChange(update.id);
+				
 				if ("_deleted" in local_doc) {
 
 					this.store.destroy(local_doc);
@@ -169,8 +166,7 @@ TinyBrowserCouch.Replicator = {
 				} else {
 					// Update revision to the latest
 					local_doc._rev = update.rev;
-					delete local_doc["_updated"];
-			
+
 					this.store.update(local_doc);
 
 					console.log('updated:' + JSON.stringify(update));
@@ -206,8 +202,28 @@ TinyBrowserCouch.Replicator = {
 		   number : 1
 		  };
 	  }
-	}
+	},
 	
+	logChange: function(id, type) {
+		
+		console.log('logging change id:' + id + ', type: ' + type);
+		this.changes.push({
+			'_id': id,
+			type: true
+		});
+    localStorage.setItem(this.name+'-changes', JSON.stringify(this.changes));	
+	},
+	removeChange: function(id) {
+		// find and remove change from changes list.
+		var change = _.detect(this.changes, function(o) {
+			return o._id === id;
+		});
+		if (! change) {
+			console.log('Warning: Could not find change ' + id);
+		}
+		this.changes = _.without(this.changes, change);
+    localStorage.setItem(this.name+'-changes', JSON.stringify(this.changes));
+	}
 };
 
 TinyBrowserCouch.CouchDB = function(couch_url) {
@@ -234,6 +250,10 @@ TinyBrowserCouch.LocalStorage = function(name) {
   var store = localStorage.getItem(this.name);
   this.data = (store && JSON.parse(store)) || {};
 	this.replicator.store = this;
+	
+	// Meta data tracked for CouchDB replication
+  var changes = localStorage.getItem(this.name + '-changes');
+  this.replicator.changes = (changes && JSON.parse(changes)) || [];
 };
 
 _.extend(TinyBrowserCouch.LocalStorage.prototype, {
@@ -248,6 +268,7 @@ _.extend(TinyBrowserCouch.LocalStorage.prototype, {
   create: function(model) {
     if (!model._id) model._id = model.attributes._id = guid();
     this.data[model._id] = model;
+		this.replicator.logChange(model._id, '_new');		
     this.save();
     return model;
   },
@@ -259,8 +280,12 @@ _.extend(TinyBrowserCouch.LocalStorage.prototype, {
 			
 			model = model.attributes;
 		}
-		model._updated = true;
-
+		//model._updated = true;
+		if ("_rev" in model) {
+			
+			this.replicator.logChange(model._id, '_updated');
+		}
+		
 		if (model._id == undefined) {
 			console.log('no model._id! :');
 			console.log(model);
@@ -298,18 +323,14 @@ _.extend(TinyBrowserCouch.LocalStorage.prototype, {
 			model = model.attributes;
 		}
 
-		model._deleted = true;
-		if (("_rev" in model) === false) {
+		console.log('destroying ' + model._id);
+		
+		if ("_rev" in model) {
 			
-			delete this.data[model._id];
-			
-			console.log('destroying ' + model._id);
-			
-		} else {
-			
-			this.update(model);
-			console.log('flagging as deleted ' + model._id);
+			this.replicator.logChange(model._id, '_deleted');
 		}
+
+		delete this.data[model._id];
 		
     return model;
   },
