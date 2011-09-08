@@ -28,9 +28,6 @@ TinyBrowserCouch.Replicator = {
 			// Loop through all couch records,
 			var results = data.results;
 
-			console.log('receiving changes ' + results.length);
-			
-
 			for (var i=0; i<results.length; i++) {
 
 				var doc = results[i].doc;
@@ -69,7 +66,7 @@ TinyBrowserCouch.Replicator = {
 			}
 
 			// store sequence number so it can be used next time
-			localStorage.setItem(self.store.name + '-last-seq', data.last_seq)
+			localStorage.setItem(self.store.name + '-last-seq', data.last_seq);
 			
 			if (typeof(callback) === 'function') {
 				callback();
@@ -104,7 +101,7 @@ TinyBrowserCouch.Replicator = {
 
 			} else {
 				// to delete
-				var temp_doc = _.extend(doc);
+				temp_doc = _.extend(doc);
 			}
 
 			if ("_revision" in temp_doc) {
@@ -141,9 +138,6 @@ TinyBrowserCouch.Replicator = {
 	
 	parseBulkDocsResponse: function(records, callback) {
 
-		console.log('_bulk_docs response from couch:');
-		console.log(records);
-
 		for (var i=0; i < records.length; i++) {
 
 			var update = records[i];
@@ -155,28 +149,26 @@ TinyBrowserCouch.Replicator = {
 				// New, updated or deleted records
 
 				var local_doc = this.store.findById(update.id);
-				//debugger;
-				this.removeChange(update.id);
 				
-				if ("_deleted" in local_doc) {
+				if ("_deleted" in update) {
 
 					this.store.destroy(local_doc);
 					console.log('deleted:' + JSON.stringify(update));
 
 				} else {
 					// Update revision to the latest
-					local_doc._rev = update.rev;
+					local_doc.set({'_rev': update.rev});
 
-					this.store.update(local_doc);
+					this.store.update(local_doc, {log_change: false});
 
 					console.log('updated:' + JSON.stringify(update));
 				}
+				
+				this.removeChange(update.id);
 			}
 		}
 
-		if (typeof(callback) === 'function') {
-			callback();
-		}
+		if (callback) callback();
 	},
 	
 	isMostRecentRev: function(a, b) {
@@ -195,7 +187,7 @@ TinyBrowserCouch.Replicator = {
 	      var revInfo = /^(\d+)-(.+)$/.exec(doc._rev);
 	      if (!revInfo) throw "invalid value for property '_rev'";
 	      doc._revision = {
-	        number : parseInt(revInfo[1]) + 1
+	        number : parseInt(revInfo[1], 10) + 1
 	      };
 	  } else {
 		  doc._revision = {
@@ -214,6 +206,7 @@ TinyBrowserCouch.Replicator = {
     localStorage.setItem(this.name+'-changes', JSON.stringify(this.changes));	
 	},
 	removeChange: function(id) {
+
 		// find and remove change from changes list.
 		var change = _.detect(this.changes, function(o) {
 			return o._id === id;
@@ -222,7 +215,8 @@ TinyBrowserCouch.Replicator = {
 			console.log('Warning: Could not find change ' + id);
 		}
 		this.changes = _.without(this.changes, change);
-    localStorage.setItem(this.name+'-changes', JSON.stringify(this.changes));
+		localStorage.setItem(this.name+'-changes', JSON.stringify(this.changes));
+		console.log('removed change ' + id + ', changes len:' + this.changes.length);
 	}
 };
 
@@ -274,24 +268,21 @@ _.extend(TinyBrowserCouch.LocalStorage.prototype, {
   },
 
   // Update a model by replacing its copy in `this.data`.
-  update: function(model) {
+  update: function(model, options) {
 	
-		if ("attributes" in model) {
-			
-			model = model.attributes;
+		options = options || {};
+	
+		if (! model instanceof Backbone.Model) {
+			throw "Inavlid model type. Must be of type Backbone.Model";
 		}
-		//model._updated = true;
-		if ("_rev" in model) {
-			
+		
+		if (model.get('_rev') !== undefined && options.log_change !== false) {
+
 			this.replicator.logChange(model._id, '_updated');
 		}
 		
-		if (model._id == undefined) {
-			console.log('no model._id! :');
-			console.log(model);
-		}
-
-    this.data[model._id] = model;
+    this.data[model.get('_id')] = model;
+		
     this.save();
     return model;
   },
